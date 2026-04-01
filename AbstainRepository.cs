@@ -2,7 +2,7 @@ using Microsoft.Data.Sqlite;
 
 record Habit(int Id, string Description);
 record LogEntry(int Id, int HabitId, DateTime Start, DateTime? End);
-record HabitReport(string Description, TimeSpan? CurrentDuration, TimeSpan? BestDuration, DateTime? BestDate, TimeSpan? RollingAverage);
+record HabitReport(int Id, string Description, TimeSpan? CurrentDuration, TimeSpan? BestDuration, DateTime? BestDate, TimeSpan? RollingAverage);
 
 class AbstainRepository : IDisposable
 {
@@ -224,6 +224,7 @@ class AbstainRepository : IDisposable
             TimeSpan? rollingAvg = CalculateRollingAverage(completed);
 
             reports.Add(new HabitReport(
+                habit.Id,
                 habit.Description,
                 currentDuration,
                 bestDuration,

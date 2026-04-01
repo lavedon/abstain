@@ -292,15 +292,15 @@ void ShowReport()
     {
         Console.WriteLine("Abstain Tracker");
         Console.WriteLine(new string('-', 80));
-        Console.WriteLine($"{"Habit",-20} {"Current",-16} {"Best",-16} {"Best Date",-14} {"Avg (Last 7)",-16}");
-        Console.WriteLine(new string('-', 80));
+        Console.WriteLine($"{"ID",-4} {"Habit",-20} {"Current",-16} {"Best",-16} {"Best Date",-14} {"Avg (Last 7)",-16}");
+        Console.WriteLine(new string('-', 84));
         foreach (var r in reports)
         {
             var current = r.CurrentDuration.HasValue ? FormatDuration(r.CurrentDuration.Value) : "---";
             var best = r.BestDuration.HasValue ? FormatDuration(r.BestDuration.Value) : "---";
             var bestDate = r.BestDate.HasValue ? r.BestDate.Value.ToString("yyyy-MM-dd") : "---";
             var avg = r.RollingAverage.HasValue ? FormatDuration(r.RollingAverage.Value) : "---";
-            Console.WriteLine($"{r.Description,-20} {current,-16} {best,-16} {bestDate,-14} {avg,-16}");
+            Console.WriteLine($"{r.Id,-4} {r.Description,-20} {current,-16} {best,-16} {bestDate,-14} {avg,-16}");
         }
     }
     else
@@ -308,6 +308,7 @@ void ShowReport()
         var table = new Table()
             .Border(TableBorder.Rounded)
             .Title("[bold blue]Abstain Tracker[/]")
+            .AddColumn(new TableColumn("[bold]ID[/]").Centered())
             .AddColumn("Habit")
             .AddColumn(new TableColumn("[bold]Current[/]").Centered())
             .AddColumn(new TableColumn("[bold]Best[/]").Centered())
@@ -329,7 +330,7 @@ void ShowReport()
                 ? $"[cyan]{FormatDuration(r.RollingAverage.Value)}[/]"
                 : "[dim]---[/]";
 
-            table.AddRow(Markup.Escape(r.Description), current, best, bestDate, avg);
+            table.AddRow(r.Id.ToString(), Markup.Escape(r.Description), current, best, bestDate, avg);
         }
 
         AnsiConsole.Write(table);
