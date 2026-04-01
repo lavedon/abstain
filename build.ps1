@@ -3,5 +3,5 @@ Copy-Item "C:\my-coding-projects\abstain\bin\Release\net10.0\win-x64\native\abst
 Rename-Item "C:\tools\abstain.exe" "abs.exe" -ErrorAction SilentlyContinue
 $path =  "C:\tools\Data\abstain.db";
 if(![System.IO.File]::Exists($path)){
-    Copy-Item "C:\my-coding-projects\abstain\Data\abstain.db" -Destination "C:\tools\Data"
+    Copy-Item "C:\my-coding-projects\abstain\bin\Debug\net10.0\Data\abstain.db" -Destination "C:\tools\Data"
 }
