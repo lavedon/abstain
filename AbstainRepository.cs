@@ -1,8 +1,8 @@
 using Microsoft.Data.Sqlite;
 
-record Habit(int Id, string Description);
+record Habit(int Id, string Description, TimeSpan? Goal);
 record LogEntry(int Id, int HabitId, DateTime Start, DateTime? End);
-record HabitReport(int Id, string Description, TimeSpan? CurrentDuration, TimeSpan? BestDuration, DateTime? BestDate, TimeSpan? RollingAverage);
+record HabitReport(int Id, string Description, TimeSpan? Goal, TimeSpan? CurrentDuration, TimeSpan? BestDuration, DateTime? BestDate, TimeSpan? RollingAverage);
 
 class AbstainRepository : IDisposable
 {
@@ -24,10 +24,20 @@ class AbstainRepository : IDisposable
         createHabits.CommandText = """
             CREATE TABLE IF NOT EXISTS Habits (
                 Id INTEGER PRIMARY KEY,
-                Description TEXT NOT NULL
+                Description TEXT NOT NULL,
+                Goal TEXT
             );
             """;
         createHabits.ExecuteNonQuery();
+
+        // Add Goal column to existing databases (idempotent)
+        try
+        {
+            using var addGoal = _connection.CreateCommand();
+            addGoal.CommandText = "ALTER TABLE Habits ADD COLUMN Goal TEXT;";
+            addGoal.ExecuteNonQuery();
+        }
+        catch (SqliteException) { /* Column already exists */ }
 
         using var createLog = _connection.CreateCommand();
         createLog.CommandText = """
@@ -45,13 +55,16 @@ class AbstainRepository : IDisposable
     public List<Habit> GetHabits()
     {
         using var cmd = _connection.CreateCommand();
-        cmd.CommandText = "SELECT Id, Description FROM Habits ORDER BY Id;";
+        cmd.CommandText = "SELECT Id, Description, Goal FROM Habits ORDER BY Id;";
 
         var habits = new List<Habit>();
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
         {
-            habits.Add(new Habit(reader.GetInt32(0), reader.GetString(1)));
+            habits.Add(new Habit(
+                reader.GetInt32(0),
+                reader.GetString(1),
+                reader.IsDBNull(2) ? null : TimeSpan.Parse(reader.GetString(2))));
         }
         return habits;
     }
@@ -62,19 +75,22 @@ class AbstainRepository : IDisposable
 
         if (int.TryParse(input, out var id))
         {
-            cmd.CommandText = "SELECT Id, Description FROM Habits WHERE Id = @id;";
+            cmd.CommandText = "SELECT Id, Description, Goal FROM Habits WHERE Id = @id;";
             cmd.Parameters.AddWithValue("@id", id);
         }
         else
         {
-            cmd.CommandText = "SELECT Id, Description FROM Habits WHERE Description = @desc COLLATE NOCASE;";
+            cmd.CommandText = "SELECT Id, Description, Goal FROM Habits WHERE Description = @desc COLLATE NOCASE;";
             cmd.Parameters.AddWithValue("@desc", input);
         }
 
         using var reader = cmd.ExecuteReader();
         if (reader.Read())
         {
-            return new Habit(reader.GetInt32(0), reader.GetString(1));
+            return new Habit(
+                reader.GetInt32(0),
+                reader.GetString(1),
+                reader.IsDBNull(2) ? null : TimeSpan.Parse(reader.GetString(2)));
         }
         return null;
     }
@@ -89,7 +105,16 @@ class AbstainRepository : IDisposable
         using var idCmd = _connection.CreateCommand();
         idCmd.CommandText = "SELECT last_insert_rowid();";
         var id = Convert.ToInt32(idCmd.ExecuteScalar());
-        return new Habit(id, description);
+        return new Habit(id, description, null);
+    }
+
+    public void SetGoal(int habitId, TimeSpan? goal)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = "UPDATE Habits SET Goal = @goal WHERE Id = @id;";
+        cmd.Parameters.AddWithValue("@id", habitId);
+        cmd.Parameters.AddWithValue("@goal", goal.HasValue ? goal.Value.ToString() : DBNull.Value);
+        cmd.ExecuteNonQuery();
     }
 
     public void StartAttempt(int habitId)
@@ -226,6 +251,7 @@ class AbstainRepository : IDisposable
             reports.Add(new HabitReport(
                 habit.Id,
                 habit.Description,
+                habit.Goal,
                 currentDuration,
                 bestDuration,
                 bestDate,

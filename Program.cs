@@ -6,6 +6,8 @@ string? habitArg = null;
 string? startArg = null;
 string? stopArg = null;
 string? resetArg = null;
+string? goalHabitArg = null;
+string? goalDurationArg = null;
 
 // Parse arguments
 for (int i = 0; i < args.Length; i++)
@@ -71,6 +73,18 @@ for (int i = 0; i < args.Length; i++)
             return 1;
         }
         resetArg = args[++i];
+        continue;
+    }
+
+    if (arg == "goal")
+    {
+        if (i + 2 >= args.Length)
+        {
+            PrintError("--goal requires a habit name/ID and a duration. Example: --goal YouTube 7d, or --goal YouTube clear");
+            return 1;
+        }
+        goalHabitArg = args[++i];
+        goalDurationArg = args[++i];
         continue;
     }
 
@@ -155,6 +169,35 @@ if (resetArg is not null)
     return 0;
 }
 
+if (goalHabitArg is not null && goalDurationArg is not null)
+{
+    var habit = repo.GetHabitByNameOrId(goalHabitArg);
+    if (habit is null)
+    {
+        PrintError($"Habit not found: {goalHabitArg}");
+        PrintHabits();
+        return 1;
+    }
+
+    if (goalDurationArg.Equals("clear", StringComparison.OrdinalIgnoreCase) || goalDurationArg.Equals("none", StringComparison.OrdinalIgnoreCase))
+    {
+        repo.SetGoal(habit.Id, null);
+        PrintSuccess($"Cleared goal for: {habit.Description}");
+        ShowReport();
+        return 0;
+    }
+
+    if (!TryParseDuration(goalDurationArg, out var goal))
+    {
+        PrintError($"Invalid duration: {goalDurationArg}. Examples: 7d, 12h, 30m, 7d12h, 1:30:00");
+        return 1;
+    }
+    repo.SetGoal(habit.Id, goal);
+    PrintSuccess($"Set goal for {habit.Description}: {FormatDuration(goal)}");
+    ShowReport();
+    return 0;
+}
+
 if (interactive)
 {
     return RunInteractive();
@@ -175,7 +218,7 @@ int RunInteractive()
         var choice = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
                 .Title("[bold blue]Abstain Tracker[/]")
-                .AddChoices("Start New Attempt", "Stop Current Attempt", "Reset Current Attempt", "Add New Habit", "Exit"));
+                .AddChoices("Start New Attempt", "Stop Current Attempt", "Reset Current Attempt", "Add New Habit", "Set Goal", "Exit"));
 
         if (choice == "Exit")
             return 0;
@@ -199,7 +242,7 @@ int RunInteractive()
                 continue;
             }
 
-            var habitChoices = habits.Select(h => $"{h.Description} (ID: {h.Id})").ToList();
+            var habitChoices = habits.Select(h => $"{Markup.Escape(h.Description)} (ID: {h.Id})").ToList();
             var selected = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title("[bold]Select habit:[/]")
@@ -233,7 +276,7 @@ int RunInteractive()
                 continue;
             }
 
-            var habitChoices = habits.Select(h => h.Description).ToList();
+            var habitChoices = habits.Select(h => Markup.Escape(h.Description)).ToList();
             var selected = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title("[bold]Select habit to stop:[/]")
@@ -258,7 +301,7 @@ int RunInteractive()
                 continue;
             }
 
-            var habitChoices = habits.Select(h => h.Description).ToList();
+            var habitChoices = habits.Select(h => Markup.Escape(h.Description)).ToList();
             var selected = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title("[bold]Select habit to reset:[/]")
@@ -269,6 +312,56 @@ int RunInteractive()
             var habit = habits[idx];
             repo.ResetAttempt(habit.Id);
             PrintSuccess($"Reset timer for: {habit.Description}");
+            AnsiConsole.WriteLine();
+            continue;
+        }
+
+        if (choice == "Set Goal")
+        {
+            var habits = repo.GetHabits();
+            if (habits.Count == 0)
+            {
+                PrintWarning("No habits defined. Add one first.");
+                AnsiConsole.WriteLine();
+                continue;
+            }
+
+            var habitChoices = habits.Select(h =>
+            {
+                var goalStr = h.Goal.HasValue ? $" — goal: {FormatDuration(h.Goal.Value)}" : "";
+                return $"{Markup.Escape(h.Description)} (ID: {h.Id}){goalStr}";
+            }).ToList();
+            var selected = AnsiConsole.Prompt(
+                new SelectionPrompt<string>()
+                    .Title("[bold]Select habit:[/]")
+                    .PageSize(10)
+                    .AddChoices(habitChoices));
+
+            var idx = habitChoices.IndexOf(selected);
+            var habit = habits[idx];
+
+            var input = AnsiConsole.Prompt(
+                new TextPrompt<string>("[bold]Goal duration[/] (e.g. [green]7d[/], [green]12h[/], [green]30m[/], [green]1:30:00[/], or [green]clear[/]):")
+                    .Validate(s =>
+                    {
+                        if (s.Equals("clear", StringComparison.OrdinalIgnoreCase) || s.Equals("none", StringComparison.OrdinalIgnoreCase))
+                            return ValidationResult.Success();
+                        return TryParseDuration(s, out _)
+                            ? ValidationResult.Success()
+                            : ValidationResult.Error("Enter a valid duration like 7d, 12h, 30m, or 1:30:00");
+                    }));
+
+            if (input.Equals("clear", StringComparison.OrdinalIgnoreCase) || input.Equals("none", StringComparison.OrdinalIgnoreCase))
+            {
+                repo.SetGoal(habit.Id, null);
+                PrintSuccess($"Cleared goal for: {habit.Description}");
+            }
+            else
+            {
+                TryParseDuration(input, out var goal);
+                repo.SetGoal(habit.Id, goal);
+                PrintSuccess($"Set goal for {habit.Description}: {FormatDuration(goal)}");
+            }
             AnsiConsole.WriteLine();
         }
     }
@@ -291,16 +384,17 @@ void ShowReport()
     if (plain)
     {
         Console.WriteLine("Abstain Tracker");
-        Console.WriteLine(new string('-', 80));
-        Console.WriteLine($"{"ID",-4} {"Habit",-20} {"Current",-16} {"Best",-16} {"Best Date",-14} {"Avg (Last 7)",-16}");
-        Console.WriteLine(new string('-', 84));
+        Console.WriteLine(new string('-', 100));
+        Console.WriteLine($"{"ID",-4} {"Habit",-20} {"Current",-16} {"Goal",-20} {"Best",-16} {"Best Date",-12} {"Avg (Last 7)",-16}");
+        Console.WriteLine(new string('-', 100));
         foreach (var r in reports)
         {
             var current = r.CurrentDuration.HasValue ? FormatDuration(r.CurrentDuration.Value) : "---";
+            var goal = FormatGoalPlain(r.Goal, r.CurrentDuration);
             var best = r.BestDuration.HasValue ? FormatDuration(r.BestDuration.Value) : "---";
             var bestDate = r.BestDate.HasValue ? r.BestDate.Value.ToString("yyyy-MM-dd") : "---";
             var avg = r.RollingAverage.HasValue ? FormatDuration(r.RollingAverage.Value) : "---";
-            Console.WriteLine($"{r.Id,-4} {r.Description,-20} {current,-16} {best,-16} {bestDate,-14} {avg,-16}");
+            Console.WriteLine($"{r.Id,-4} {r.Description,-20} {current,-16} {goal,-20} {best,-16} {bestDate,-12} {avg,-16}");
         }
     }
     else
@@ -311,15 +405,15 @@ void ShowReport()
             .AddColumn(new TableColumn("[bold]ID[/]").Centered())
             .AddColumn("Habit")
             .AddColumn(new TableColumn("[bold]Current[/]").Centered())
+            .AddColumn(new TableColumn("[bold]Goal[/]").Centered())
             .AddColumn(new TableColumn("[bold]Best[/]").Centered())
             .AddColumn(new TableColumn("[bold]Best Date[/]").Centered())
             .AddColumn(new TableColumn("[bold]Avg (Last 7)[/]").Centered());
 
         foreach (var r in reports)
         {
-            var current = r.CurrentDuration.HasValue
-                ? $"[green]{FormatDuration(r.CurrentDuration.Value)}[/]"
-                : "[dim]---[/]";
+            var current = FormatCurrentMarkup(r.CurrentDuration, r.Goal);
+            var goal = FormatGoalMarkup(r.Goal, r.CurrentDuration);
             var best = r.BestDuration.HasValue
                 ? $"[yellow]{FormatDuration(r.BestDuration.Value)}[/]"
                 : "[dim]---[/]";
@@ -330,7 +424,7 @@ void ShowReport()
                 ? $"[cyan]{FormatDuration(r.RollingAverage.Value)}[/]"
                 : "[dim]---[/]";
 
-            table.AddRow(r.Id.ToString(), Markup.Escape(r.Description), current, best, bestDate, avg);
+            table.AddRow(r.Id.ToString(), Markup.Escape(r.Description), current, goal, best, bestDate, avg);
         }
 
         AnsiConsole.Write(table);
@@ -342,6 +436,89 @@ string FormatDuration(TimeSpan duration)
     if (duration.TotalDays >= 1)
         return $"{(int)duration.TotalDays}d {duration.Hours}h {duration.Minutes:D2}m";
     return $"{(int)duration.TotalHours}h {duration.Minutes:D2}m";
+}
+
+string FormatCurrentMarkup(TimeSpan? current, TimeSpan? goal)
+{
+    if (!current.HasValue) return "[dim]---[/]";
+    var text = FormatDuration(current.Value);
+    if (!goal.HasValue) return $"[green]{text}[/]";
+    if (current.Value >= goal.Value) return $"[bold green]{text}[/]";
+    var pct = current.Value.TotalSeconds / goal.Value.TotalSeconds;
+    var color = pct switch
+    {
+        >= 0.75 => "green",
+        >= 0.5 => "cyan",
+        >= 0.25 => "yellow",
+        _ => "red"
+    };
+    return $"[{color}]{text}[/]";
+}
+
+string FormatGoalMarkup(TimeSpan? goal, TimeSpan? current)
+{
+    if (!goal.HasValue) return "[dim]---[/]";
+    var goalText = FormatDuration(goal.Value);
+    if (!current.HasValue) return $"[blue]{goalText}[/]";
+    if (current.Value >= goal.Value) return $"[bold green]{goalText} ✓[/]";
+    var pct = (int)(current.Value.TotalSeconds / goal.Value.TotalSeconds * 100);
+    return $"[blue]{goalText}[/] [dim]({pct}%)[/]";
+}
+
+string FormatGoalPlain(TimeSpan? goal, TimeSpan? current)
+{
+    if (!goal.HasValue) return "---";
+    var goalText = FormatDuration(goal.Value);
+    if (!current.HasValue) return goalText;
+    if (current.Value >= goal.Value) return $"{goalText} MET";
+    var pct = (int)(current.Value.TotalSeconds / goal.Value.TotalSeconds * 100);
+    return $"{goalText} ({pct}%)";
+}
+
+// Parses durations like "7d", "12h", "30m", "7d12h30m", or standard TimeSpan ("1:30:00", "7.12:00:00")
+bool TryParseDuration(string input, out TimeSpan duration)
+{
+    duration = TimeSpan.Zero;
+    if (string.IsNullOrWhiteSpace(input)) return false;
+
+    var trimmed = input.Trim();
+
+    // Standard TimeSpan format
+    if (TimeSpan.TryParse(trimmed, out duration) && duration > TimeSpan.Zero)
+        return true;
+
+    // Shortcut format: 7d12h30m
+    var total = TimeSpan.Zero;
+    var num = "";
+    bool found = false;
+    foreach (var c in trimmed.ToLowerInvariant())
+    {
+        if (char.IsDigit(c))
+        {
+            num += c;
+        }
+        else if (num.Length > 0 && (c == 'd' || c == 'h' || c == 'm'))
+        {
+            var n = int.Parse(num);
+            total += c switch
+            {
+                'd' => TimeSpan.FromDays(n),
+                'h' => TimeSpan.FromHours(n),
+                'm' => TimeSpan.FromMinutes(n),
+                _ => TimeSpan.Zero
+            };
+            num = "";
+            found = true;
+        }
+        else if (!char.IsWhiteSpace(c))
+        {
+            return false;
+        }
+    }
+    if (num.Length > 0) return false; // trailing digits without unit
+    if (!found || total <= TimeSpan.Zero) return false;
+    duration = total;
+    return true;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -380,13 +557,14 @@ void PrintUsage()
         Console.WriteLine("Usage: abs [options]");
         Console.WriteLine();
         Console.WriteLine("Options:");
-        Console.WriteLine("  --habit <desc>      Create a new habit to track");
-        Console.WriteLine("  --start <name|id>   Start a new abstinence attempt");
-        Console.WriteLine("  --stop <name|id>    Stop the current attempt");
-        Console.WriteLine("  --reset <name|id>   Reset the current attempt timer");
-        Console.WriteLine("  --plain             Plain text output (no colors)");
-        Console.WriteLine("  --interactive       Launch interactive mode");
-        Console.WriteLine("  --help, -h          Show this help");
+        Console.WriteLine("  --habit <desc>             Create a new habit to track");
+        Console.WriteLine("  --start <name|id>          Start a new abstinence attempt");
+        Console.WriteLine("  --stop <name|id>           Stop the current attempt");
+        Console.WriteLine("  --reset <name|id>          Reset the current attempt timer");
+        Console.WriteLine("  --goal <name|id> <dur>     Set goal (e.g. 7d, 12h, 30m, 1:30:00, or 'clear')");
+        Console.WriteLine("  --plain                    Plain text output (no colors)");
+        Console.WriteLine("  --interactive              Launch interactive mode");
+        Console.WriteLine("  --help, -h                 Show this help");
         Console.WriteLine();
         Console.WriteLine("No arguments shows the current report.");
         Console.WriteLine();
@@ -396,6 +574,8 @@ void PrintUsage()
         Console.WriteLine("  abs --start Smoking");
         Console.WriteLine("  abs --stop Smoking");
         Console.WriteLine("  abs --reset Smoking");
+        Console.WriteLine("  abs --goal Smoking 7d");
+        Console.WriteLine("  abs --goal Smoking clear");
         Console.WriteLine("  abs --interactive");
     }
     else
@@ -403,13 +583,14 @@ void PrintUsage()
         var panel = new Panel(
             new Rows(
                 new Markup("[bold]Options:[/]"),
-                new Markup("  [green]--habit <desc>[/]      Create a new habit to track"),
-                new Markup("  [green]--start <name|id>[/]   Start a new abstinence attempt"),
-                new Markup("  [green]--stop <name|id>[/]    Stop the current attempt"),
-                new Markup("  [green]--reset <name|id>[/]   Reset the current attempt timer"),
-                new Markup("  [green]--plain[/]             Plain text output (no colors)"),
-                new Markup("  [green]--interactive[/]       Launch interactive mode"),
-                new Markup("  [green]--help[/], [green]-h[/]          Show this help"),
+                new Markup("  [green]--habit <desc>[/]             Create a new habit to track"),
+                new Markup("  [green]--start <name|id>[/]          Start a new abstinence attempt"),
+                new Markup("  [green]--stop <name|id>[/]           Stop the current attempt"),
+                new Markup("  [green]--reset <name|id>[/]          Reset the current attempt timer"),
+                new Markup("  [green]--goal <name|id> <dur>[/]     Set goal (e.g. 7d, 12h, 30m, 1:30:00, or 'clear')"),
+                new Markup("  [green]--plain[/]                    Plain text output (no colors)"),
+                new Markup("  [green]--interactive[/]              Launch interactive mode"),
+                new Markup("  [green]--help[/], [green]-h[/]                 Show this help"),
                 new Markup(""),
                 new Markup("[bold]Examples:[/]"),
                 new Markup("  [dim]abs[/]"),
@@ -417,6 +598,8 @@ void PrintUsage()
                 new Markup("  [dim]abs --start Smoking[/]"),
                 new Markup("  [dim]abs --stop Smoking[/]"),
                 new Markup("  [dim]abs --reset Smoking[/]"),
+                new Markup("  [dim]abs --goal Smoking 7d[/]"),
+                new Markup("  [dim]abs --goal Smoking clear[/]"),
                 new Markup("  [dim]abs --interactive[/]"),
                 new Markup(""),
                 new Markup("[dim]No arguments shows the current report.[/]")
