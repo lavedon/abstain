@@ -158,6 +158,22 @@ class AbstainRepository : IDisposable
         return cmd.ExecuteNonQuery();
     }
 
+    public int GetLogCount(int habitId)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM Log WHERE Habit = @habitId;";
+        cmd.Parameters.AddWithValue("@habitId", habitId);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    public int ClearLog(int habitId)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = "DELETE FROM Log WHERE Habit = @habitId;";
+        cmd.Parameters.AddWithValue("@habitId", habitId);
+        return cmd.ExecuteNonQuery();
+    }
+
     public LogEntry? GetActiveEntry(int habitId)
     {
         using var cmd = _connection.CreateCommand();

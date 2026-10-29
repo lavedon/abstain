@@ -6,6 +6,7 @@ string? habitArg = null;
 string? startArg = null;
 string? stopArg = null;
 string? resetArg = null;
+string? clearArg = null;
 string? goalHabitArg = null;
 string? goalDurationArg = null;
 
@@ -73,6 +74,17 @@ for (int i = 0; i < args.Length; i++)
             return 1;
         }
         resetArg = args[++i];
+        continue;
+    }
+
+    if (arg == "clear")
+    {
+        if (i + 1 >= args.Length)
+        {
+            PrintError("--clear requires a habit name or ID. Example: --clear NoYouTube");
+            return 1;
+        }
+        clearArg = args[++i];
         continue;
     }
 
@@ -169,6 +181,35 @@ if (resetArg is not null)
     return 0;
 }
 
+if (clearArg is not null)
+{
+    var habit = repo.GetHabitByNameOrId(clearArg);
+    if (habit is null)
+    {
+        PrintError($"Habit not found: {clearArg}");
+        PrintHabits();
+        return 1;
+    }
+
+    var entryCount = repo.GetLogCount(habit.Id);
+    if (entryCount == 0)
+    {
+        PrintWarning($"No log data to clear for: {habit.Description}");
+        return 1;
+    }
+
+    if (!ConfirmAction($"Delete all {entryCount} log {EntryWord(entryCount)} for \"{habit.Description}\"? This cannot be undone."))
+    {
+        PrintWarning("Cancelled. No data was deleted.");
+        return 1;
+    }
+
+    var cleared = repo.ClearLog(habit.Id);
+    PrintSuccess($"Cleared {cleared} log {EntryWord(cleared)} for: {habit.Description}");
+    ShowReport();
+    return 0;
+}
+
 if (goalHabitArg is not null && goalDurationArg is not null)
 {
     var habit = repo.GetHabitByNameOrId(goalHabitArg);
@@ -218,7 +259,7 @@ int RunInteractive()
         var choice = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
                 .Title("[bold blue]Abstain Tracker[/]")
-                .AddChoices("Start New Attempt", "Stop Current Attempt", "Reset Current Attempt", "Add New Habit", "Set Goal", "Exit"));
+                .AddChoices("Start New Attempt", "Stop Current Attempt", "Reset Current Attempt", "Add New Habit", "Set Goal", "Clear Habit Data", "Exit"));
 
         if (choice == "Exit")
             return 0;
@@ -363,6 +404,52 @@ int RunInteractive()
                 PrintSuccess($"Set goal for {habit.Description}: {FormatDuration(goal)}");
             }
             AnsiConsole.WriteLine();
+            continue;
+        }
+
+        if (choice == "Clear Habit Data")
+        {
+            var habits = repo.GetHabits();
+            if (habits.Count == 0)
+            {
+                PrintWarning("No habits defined. Add one first.");
+                AnsiConsole.WriteLine();
+                continue;
+            }
+
+            var habitChoices = habits.Select(h =>
+            {
+                var count = repo.GetLogCount(h.Id);
+                return $"{Markup.Escape(h.Description)} (ID: {h.Id}, {count} {EntryWord(count)})";
+            }).ToList();
+            var selected = AnsiConsole.Prompt(
+                new SelectionPrompt<string>()
+                    .Title("[bold]Select habit to clear all log data:[/]")
+                    .PageSize(10)
+                    .AddChoices(habitChoices));
+
+            var idx = habitChoices.IndexOf(selected);
+            var habit = habits[idx];
+
+            var entryCount = repo.GetLogCount(habit.Id);
+            if (entryCount == 0)
+            {
+                PrintWarning($"No log data to clear for: {habit.Description}");
+                AnsiConsole.WriteLine();
+                continue;
+            }
+
+            if (!ConfirmAction($"Delete all {entryCount} log {EntryWord(entryCount)} for \"{habit.Description}\"? This cannot be undone."))
+            {
+                PrintWarning("Cancelled. No data was deleted.");
+                AnsiConsole.WriteLine();
+                continue;
+            }
+
+            var cleared = repo.ClearLog(habit.Id);
+            PrintSuccess($"Cleared {cleared} log {EntryWord(cleared)} for: {habit.Description}");
+            AnsiConsole.WriteLine();
+            continue;
         }
     }
 }
@@ -522,6 +609,21 @@ bool TryParseDuration(string input, out TimeSpan duration)
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
+string EntryWord(int count) => count == 1 ? "entry" : "entries";
+
+bool ConfirmAction(string message)
+{
+    if (plain)
+    {
+        Console.Write($"{message} [y/N]: ");
+        var response = Console.ReadLine();
+        return response?.Trim().ToLowerInvariant() is "y" or "yes";
+    }
+
+    return AnsiConsole.Prompt(
+        new ConfirmationPrompt($"[red]{Markup.Escape(message)}[/]") { DefaultValue = false });
+}
+
 void PrintHabits()
 {
     var habits = repo.GetHabits();
@@ -561,6 +663,7 @@ void PrintUsage()
         Console.WriteLine("  --start <name|id>          Start a new abstinence attempt");
         Console.WriteLine("  --stop <name|id>           Stop the current attempt");
         Console.WriteLine("  --reset <name|id>          Reset the current attempt timer");
+        Console.WriteLine("  --clear <name|id>          Delete ALL logged data for a habit (keeps the habit)");
         Console.WriteLine("  --goal <name|id> <dur>     Set goal (e.g. 7d, 12h, 30m, 1:30:00, or 'clear')");
         Console.WriteLine("  --plain                    Plain text output (no colors)");
         Console.WriteLine("  --interactive              Launch interactive mode");
@@ -574,6 +677,7 @@ void PrintUsage()
         Console.WriteLine("  abs --start Smoking");
         Console.WriteLine("  abs --stop Smoking");
         Console.WriteLine("  abs --reset Smoking");
+        Console.WriteLine("  abs --clear NoYouTube");
         Console.WriteLine("  abs --goal Smoking 7d");
         Console.WriteLine("  abs --goal Smoking clear");
         Console.WriteLine("  abs --interactive");
@@ -587,6 +691,7 @@ void PrintUsage()
                 new Markup("  [green]--start <name|id>[/]          Start a new abstinence attempt"),
                 new Markup("  [green]--stop <name|id>[/]           Stop the current attempt"),
                 new Markup("  [green]--reset <name|id>[/]          Reset the current attempt timer"),
+                new Markup("  [green]--clear <name|id>[/]          Delete ALL logged data for a habit (keeps the habit)"),
                 new Markup("  [green]--goal <name|id> <dur>[/]     Set goal (e.g. 7d, 12h, 30m, 1:30:00, or 'clear')"),
                 new Markup("  [green]--plain[/]                    Plain text output (no colors)"),
                 new Markup("  [green]--interactive[/]              Launch interactive mode"),
@@ -598,6 +703,7 @@ void PrintUsage()
                 new Markup("  [dim]abs --start Smoking[/]"),
                 new Markup("  [dim]abs --stop Smoking[/]"),
                 new Markup("  [dim]abs --reset Smoking[/]"),
+                new Markup("  [dim]abs --clear NoYouTube[/]"),
                 new Markup("  [dim]abs --goal Smoking 7d[/]"),
                 new Markup("  [dim]abs --goal Smoking clear[/]"),
                 new Markup("  [dim]abs --interactive[/]"),
